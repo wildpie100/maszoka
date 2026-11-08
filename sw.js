@@ -1,6 +1,6 @@
 /* Mászóterv service worker: az app offline is megnyílik.
-   Verzióváltáskor emeld a CACHE nevét (pl. mt-v2). */
-const CACHE = 'mt-v1';
+   Verzióváltáskor emeld a CACHE nevét (pl. mt-v3). */
+const CACHE = 'mt-v3';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {

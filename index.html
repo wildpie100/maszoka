@@ -165,6 +165,7 @@
   }
   .timer[data-phase="work"] { --tb: var(--fg); --tf: var(--bg); border-top-color: var(--bg); }
   .timer[data-phase="prep"] { border-top-style: dashed; }
+  .timer.flash { box-shadow: inset 0 0 0 5px var(--tf); }
   .t-in { max-width: 620px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
   .t-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
   .t-label { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; min-width: 0; }
@@ -670,6 +671,10 @@
     h += '<div class="addrow"><button type="button" class="btn sm" data-act="cyc-new">Új üres ciklus</button><button type="button" class="btn sm" data-act="cyc-copy">Ciklus másolása</button><button type="button" class="btn sm" data-act="cyc-del" data-arm-text="Biztosan törlöd?">Ciklus törlése</button></div>';
     h += '<hr class="hr"><p class="lbl">Hetek (most: ' + (S.cur.w + 1) + '. hét)</p>';
     h += '<div class="addrow"><button type="button" class="btn sm" data-act="wk-copy">Másolás a következő hétre</button><button type="button" class="btn sm" data-act="wk-add">Üres hét a végére</button><button type="button" class="btn sm" data-act="wk-del" data-arm-text="Biztosan törlöd?">Hét törlése</button></div>';
+    h += '<hr class="hr"><p class="lbl">Hangpróba</p>';
+    h += '<div class="addrow"><span>Hangerő:</span>' + [[0.35, 'Halk'], [0.6, 'Közepes'], [1, 'Hangos']].map(function (v) { var on = (S.vol || 0.6) === v[0]; return '<button type="button" class="btn sm' + (on ? ' fill' : '') + '" data-vol="' + v[0] + '" aria-pressed="' + on + '">' + v[1] + '</button>'; }).join('') + '</div>';
+    h += '<div class="addrow"><button type="button" class="btn sm" data-act="beeptest">Hangpróba</button></div>';
+    h += '<p class="note">Két lágy hangot hallasz. Ha nem, kapcsold ki a csendes módot (a telefon oldalán lévő kapcsoló), és emeld a hangerőt. A villanás a stopperen hang nélkül is jelzi a váltást.</p>';
     h += '<hr class="hr"><p class="lbl">Adatok mentése és betöltése</p>';
     h += '<textarea class="inp" id="datax" rows="5" placeholder="Ide kerül a mentett adat, vagy ide illeszd be a betöltendőt"></textarea>';
     h += '<div class="addrow"><button type="button" class="btn sm" data-act="export">Mentés a vágólapra</button><button type="button" class="btn sm" data-act="import" data-arm-text="Felülírja az adatokat. Biztosan?">Betöltés a mezőből</button></div>';
@@ -687,15 +692,73 @@
   }
 
   /* ---------- hang, bip, ébren tartás ---------- */
-  var AC = null, wl = null;
-  function unlockAudio() { try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) {} }
+  /* iOS-en a Web Audio némul, ha a hangoldali kapcsoló csendes állásban van. A sima <audio> elem
+     lejátszása nem, ezért a bip hangfájlokból megy, és a Web Audio csak tartalék. */
+  var AC = null, wl = null, POOL = [], PI = 0, WAVS = {};
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  function wavUrl(freq, dur) {
+    var vol = S.vol || 0.6, key = freq + '_' + dur + '_' + vol;
+    if (WAVS[key]) return WAVS[key];
+    var sr = 22050, n = Math.floor(sr * dur), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf), i;
+    function ws(o, s) { for (var k = 0; k < s.length; k++) v.setUint8(o + k, s.charCodeAt(k)); }
+    ws(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); ws(8, 'WAVE'); ws(12, 'fmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true); ws(36, 'data'); v.setUint32(40, n * 2, true);
+    /* Puha harang: 30 ms felfutás, hosszú exponenciális lecsengés, halk felhangok. */
+    var tail = Math.min(Math.floor(sr * 0.03), Math.floor(n / 2));
+    for (i = 0; i < n; i++) {
+      var t = i / sr, amp = 0;
+      if (freq) {
+        var env = (t < 0.03 ? t / 0.03 : 1) * Math.exp(-6 * t / dur);
+        var w = 2 * Math.PI * freq * t;
+        amp = 0.5 * vol * env * (Math.sin(w) + 0.22 * Math.sin(2 * w) + 0.06 * Math.sin(3 * w));
+      }
+      if (i > n - tail) amp *= (n - i) / tail;
+      v.setInt16(44 + i * 2, Math.round(amp * 32767), true);
+    }
+    var bytes = new Uint8Array(buf), s = '';
+    for (i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    WAVS[key] = 'data:audio/wav;base64,' + btoa(s);
+    return WAVS[key];
+  }
+  function unlockAudio() {
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    try {
+      if (!POOL.length) { for (var k = 0; k < 3; k++) { var a = new Audio(); a.preload = 'auto'; a.setAttribute('playsinline', ''); POOL.push(a); } }
+      var sil = wavUrl(0, 0.05);
+      POOL.forEach(function (a) { a.src = sil; var pr = a.play(); if (pr && pr.catch) pr.catch(function () {}); });
+    } catch (e) {}
+    try { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) {}
+  }
+  function flash() {
+    var t = $('timer'); if (!t) return;
+    t.classList.add('flash'); setTimeout(function () { t.classList.remove('flash'); }, 150);
+  }
   function beep(freq, dur) {
+    flash();
+    var played = false;
+    try {
+      if (POOL.length) {
+        var a = POOL[PI++ % POOL.length];
+        a.src = wavUrl(freq, dur); a.currentTime = 0;
+        var pr = a.play();
+        if (pr && pr.catch) pr.catch(function () { webBeep(freq, dur); });
+        played = true;
+      }
+    } catch (e) {}
+    if (!played) webBeep(freq, dur);
+  }
+  function webBeep(freq, dur) {
     try {
       if (!AC) return;
-      var o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime;
-      o.frequency.value = freq; o.connect(g); g.connect(AC.destination);
-      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.3, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.start(t); o.stop(t + dur + 0.03);
+      var vol = S.vol || 0.6, t = AC.currentTime, g = AC.createGain();
+      g.connect(AC.destination);
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.3 * vol, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      [[1, 1], [2, 0.22]].forEach(function (h) {
+        var o = AC.createOscillator(), hg = AC.createGain();
+        o.type = 'sine'; o.frequency.value = freq * h[0]; hg.gain.value = h[1];
+        o.connect(hg); hg.connect(g); o.start(t); o.stop(t + dur + 0.05);
+      });
     } catch (e) {}
   }
   function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
@@ -749,7 +812,7 @@
   function stopTimer(finished) {
     T.run = false; T.q = []; T.i = -1; T.paused = false; T.saving = false;
     unlockScreen();
-    if (finished) { beep(1320, 0.5); buzz(400); }
+    if (finished) { beep(659, 1.0); buzz(400); }
     showPhase();
   }
   function tick() {
@@ -757,10 +820,10 @@
     var p = curPhase(); if (!p) return;
     if (p.up) { $('tTime').textContent = mmss(elapsedUp(), true); return; }
     var rem = T.endAt - Date.now();
-    if (rem <= 0) { if (p.onEnd) p.onEnd(p.secs); beep(1000, 0.35); buzz(250); nextPhase(); return; }
+    if (rem <= 0) { if (p.onEnd) p.onEnd(p.secs); beep(587, 0.7); buzz(250); nextPhase(); return; }
     $('tTime').textContent = mmss(rem);
     var s = Math.ceil(rem / 1000);
-    if (s <= 3 && s !== T.lastSec) { T.lastSec = s; beep(660, 0.12); }
+    if (s <= 3 && s !== T.lastSec) { T.lastSec = s; beep(440, 0.25); }
   }
   setInterval(tick, 200);
 
@@ -863,6 +926,7 @@
     var t = ev.target.closest ? ev.target.closest('button') : null;
     if (!t) return;
     if (t.hasAttribute('data-tab')) { ui.tab = t.getAttribute('data-tab'); render(); return; }
+    if (t.hasAttribute('data-vol')) { S.vol = +t.getAttribute('data-vol'); save(); render(); unlockAudio(); setTimeout(function () { beep(587, 0.7); }, 120); return; }
     if (t.hasAttribute('data-range')) { ui.range = t.getAttribute('data-range'); render(); return; }
     if (t.hasAttribute('data-w')) { S.cur.w = +t.getAttribute('data-w'); save(); render(); return; }
     if (t.hasAttribute('data-day')) { S.cur.d = +t.getAttribute('data-day'); save(); render(); return; }
@@ -878,7 +942,7 @@
         var left = T.paused ? T.rem : T.endAt - Date.now();
         var el = Math.max(0, Math.round(p.secs - left / 1000));
         if (p.onEnd) p.onEnd(el);
-        beep(1000, 0.2); nextPhase();
+        beep(587, 0.5); nextPhase();
       } else if (c === 'pause') {
         if (p && p.up) { if (T.paused) { T.t0 = Date.now(); T.paused = false; } else { T.base += Date.now() - T.t0; T.paused = true; } }
         else if (T.paused) { T.endAt = Date.now() + T.rem; T.paused = false; }
@@ -899,6 +963,7 @@
     var act = t.getAttribute('data-act');
     if (!act) return;
     var cy = cyc(), sec = t.closest('.blk'), b = sec ? findBlock(sec.getAttribute('data-id')) : null;
+    if (act === 'beeptest') { unlockAudio(); setTimeout(function () { beep(440, 0.25); setTimeout(function () { beep(587, 0.7); }, 600); }, 120); return; }
     if (act === 'edit') { ui.edit = !ui.edit; render(); return; }
     if (act === 'open' && b) { ui.open[b.id] = !ui.open[b.id]; render(); return; }
     if (act === 'run' && b) { if (b.kind === 'hang') startHang(b); else startTime(b); return; }
