@@ -1,0 +1,22 @@
+Mászóterv: telepíthető webapp (iPhone, iPad, Android)
+
+A mappában 6 fájl van, mind egy szinten marad:
+index.html, manifest.webmanifest, sw.js, icon-192.png, icon-512.png, apple-touch-icon.png
+
+Feltöltés GitHub Pages-re (iPhone-ról is megy):
+1. github.com: új repository (public), pl. "maszoterv".
+2. Add file > Upload files: töltsd fel mind a 6 fájlt, Commit changes.
+3. Settings > Pages > Source: "Deploy from a branch", branch: main, mappa: /(root), Save.
+4. 1-2 perc múlva a cím: https://FELHASZNALONEV.github.io/maszoterv/
+
+Telepítés iPhone-ra:
+1. Nyisd meg a címet Safariban (nem Chrome-ban).
+2. Megosztás gomb > Hozzáadás a Főképernyőhöz > Hozzáadás.
+3. Onnantól a főképernyős ikonról indítsd. Egyszer nyisd meg internettel, utána offline is megy.
+
+Adatok átvitele a kipróbált oldalról:
+Régi oldal: Beállítás > Mentés a vágólapra. Új app: Beállítás > illeszd be a mezőbe > Betöltés a mezőből.
+A főképernyős app saját tárolót kap, a Safariban bevitt adat nem látszik benne.
+
+Frissítés: cseréld ki az index.html-t a tárhelyen, és az sw.js-ben emeld a CACHE nevét (mt-v1 -> mt-v2).
+Mentést készíts időnként: Beállítás > Mentés a vágólapra, és illeszd be egy jegyzetbe.
